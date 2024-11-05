@@ -22,7 +22,7 @@ prost-codec = ["prost", "prost-derive", "prost-build", "sha2", "_protobuf"]
 protobuf-codec = ["protobuf", "protobuf-codegen-pure", "_protobuf"]
 
 [dependencies]
-backtrace = { version = "0.3" }
+backtrace = { version = "0.3.74" }
 once_cell = "1.9"
 libc = "^0.2.66"
 log = "0.4"
@@ -56,6 +56,10 @@ protobuf-codegen-pure = { version = "2.0", optional = true }
 
 [[example]]
 name = "flamegraph"
+required-features = ["flamegraph"]
+
+[[example]]
+name = "backtrace_while_sampling"
 required-features = ["flamegraph"]
 
 [[example]]
