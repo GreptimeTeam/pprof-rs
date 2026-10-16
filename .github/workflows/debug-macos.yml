@@ -12,8 +12,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-26, macos-15, macos-15-intel]
-        variant: [original, rare-clock]
+        runner: [macos-26-intel, macos-26]
+        variant: [original]
     steps:
       - uses: actions/checkout@v4
       - name: env
@@ -56,21 +56,12 @@ jobs:
             if [ $rc -ne 0 ]; then fail=$((fail+1)); echo "run $i: rc=$rc"; fi
           done
           echo "RESULT ${{ matrix.runner }} ${{ matrix.variant }} SINGLE_TEST_FAILURES=$fail/40" | tee -a $GITHUB_STEP_SUMMARY
-      - name: symbolize libunwind fault offset
-        if: matrix.runner == 'macos-26' && matrix.variant == 'original'
-        timeout-minutes: 3
-        continue-on-error: true
+      - name: full CI test commands (native runner only)
+        if: matrix.runner == 'macos-26-intel'
         run: |
-          for f in ~/Library/Logs/DiagnosticReports/*pprof*.ips; do
-            python3 -c "
-          import json,sys
-          t=open(sys.argv[1]).read(); h,b=t.split('\n',1); b=json.loads(b)
-          ts=b['threads'][b['faultingThread']]['threadState']; rip=ts['rip']['value']
-          for im in b['usedImages']:
-              if im.get('base',0)<=rip<im.get('base',0)+im.get('size',0): print(im.get('name'), hex(rip), hex(rip-im['base']), hex(im['base']))
-          " "$f"; break
-          done
-          lldb --batch -o "target create --arch x86_64 /usr/lib/system/libunwind.dylib" -o "image lookup -v -a 0x35d4" -o "disassemble -s 0x35a0 -c 24" || true
+          cargo test --features flamegraph,prost-codec --target x86_64-apple-darwin -- --test-threads 1
+          cargo test --features flamegraph,protobuf-codec --target x86_64-apple-darwin -- --test-threads 1
+          cargo test --features flamegraph,protobuf-codec,framehop-unwinder --target x86_64-apple-darwin -- --test-threads 1
       - name: collect crash reports
         if: always()
         run: |
