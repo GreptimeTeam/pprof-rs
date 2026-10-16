@@ -1,0 +1,73 @@
+name: debug-macos-sigsegv
+on:
+  push:
+    branches: [ci-debug/macos-sigsegv]
+  workflow_dispatch:
+
+jobs:
+  stress:
+    name: stress (${{ matrix.target }}, ${{ matrix.features }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-apple-darwin, aarch64-apple-darwin]
+        features: ["flamegraph,prost-codec", "flamegraph,prost-codec,framehop-unwinder"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: env
+        run: |
+          sw_vers; uname -a; sysctl -n machdep.cpu.brand_string
+          rustup target add ${{ matrix.target }}
+          rustc -Vv
+      - name: build test binary
+        run: |
+          BIN=$(cargo test --lib --features ${{ matrix.features }} --target ${{ matrix.target }} --no-run --message-format=json \
+            | jq -r 'select(.reason=="compiler-artifact" and .profile.test==true and .target.kind[0]=="lib") | .executable')
+          echo "BIN=$BIN" >> $GITHUB_ENV
+          file "$BIN"
+      - name: stress single test (60 runs)
+        run: |
+          fail=0
+          for i in $(seq 1 60); do
+            "$BIN" profiler::tests::test_no_alloc_during_unwind --exact --test-threads 1 > out.txt 2>&1
+            rc=$?
+            if [ $rc -ne 0 ]; then fail=$((fail+1)); echo "run $i: rc=$rc"; tail -3 out.txt; fi
+          done
+          echo "SINGLE_TEST_FAILURES=$fail/60" | tee -a $GITHUB_STEP_SUMMARY
+      - name: stress full lib suite (20 runs)
+        run: |
+          fail=0
+          for i in $(seq 1 20); do
+            "$BIN" --test-threads 1 > out.txt 2>&1
+            rc=$?
+            if [ $rc -ne 0 ]; then fail=$((fail+1)); echo "run $i: rc=$rc"; grep -E "\.\.\. |signal" out.txt | tail -3; fi
+          done
+          echo "FULL_SUITE_FAILURES=$fail/20" | tee -a $GITHUB_STEP_SUMMARY
+      - name: catch crash under lldb
+        run: |
+          for i in $(seq 1 40); do
+            lldb --batch \
+              -o "process handle SIGPROF -n false -p true -s false" \
+              -o "process handle SIGALRM -n false -p true -s false" \
+              -o run \
+              -k "thread backtrace all" -k "register read" -k "disassemble -p -c 12" -k "image lookup -a \$pc -v" -k quit \
+              -- "$BIN" profiler::tests::test_no_alloc_during_unwind --exact --test-threads 1 > lldb-$i.txt 2>&1
+            if grep -q "stop reason = EXC_BAD_ACCESS\|stop reason = signal SIGSEGV\|stop reason = EXC_" lldb-$i.txt; then
+              echo "crashed on attempt $i"; cat lldb-$i.txt; cp lldb-$i.txt lldb-crash.txt; break
+            fi
+          done
+          ls lldb-crash.txt 2>/dev/null || echo "no crash caught under lldb in 40 attempts"
+      - name: collect crash reports
+        if: always()
+        run: |
+          mkdir -p reports
+          cp ~/Library/Logs/DiagnosticReports/*pprof* reports/ 2>/dev/null || true
+          ls -la reports
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: debug-${{ matrix.target }}-${{ strategy.job-index }}
+          path: |
+            reports/
+            lldb-crash.txt
