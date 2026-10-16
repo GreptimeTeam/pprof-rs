@@ -28,6 +28,7 @@ jobs:
           file "$BIN"
       - name: stress single test (60 runs)
         run: |
+          set +e
           fail=0
           for i in $(seq 1 60); do
             "$BIN" profiler::tests::test_no_alloc_during_unwind --exact --test-threads 1 > out.txt 2>&1
@@ -37,6 +38,7 @@ jobs:
           echo "SINGLE_TEST_FAILURES=$fail/60" | tee -a $GITHUB_STEP_SUMMARY
       - name: stress full lib suite (20 runs)
         run: |
+          set +e
           fail=0
           for i in $(seq 1 20); do
             "$BIN" --test-threads 1 > out.txt 2>&1
@@ -46,6 +48,7 @@ jobs:
           echo "FULL_SUITE_FAILURES=$fail/20" | tee -a $GITHUB_STEP_SUMMARY
       - name: catch crash under lldb
         run: |
+          set +e
           for i in $(seq 1 40); do
             lldb --batch \
               -o "process handle SIGPROF -n false -p true -s false" \
